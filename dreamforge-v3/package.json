@@ -1,7 +1,7 @@
 {
   "name": "dreamforge-ai",
   "version": "1.0.0",
-  "description": "AI Image Generation Platform",
+  "type": "module",
   "private": true,
   "engines": {
     "node": ">=18"
