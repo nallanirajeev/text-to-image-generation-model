@@ -1,0 +1,1594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DreamForge — AI Image Generation</title>
+  <meta name="description" content="Generate stunning AI images from text prompts. Powered by Cloudflare AI." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['Instrument Serif', 'Georgia', 'serif'],
+            mono:  ['Geist Mono', 'monospace'],
+            sans:  ['Geist', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --bg:       #06070d;
+      --surface:  #0d0f1a;
+      --surface2: #13162a;
+      --border:   rgba(255,255,255,0.07);
+      --border2:  rgba(255,255,255,0.13);
+      --cyan:     #00e5ff;
+      --cyan-dim: rgba(0,229,255,0.12);
+      --cyan-glo: rgba(0,229,255,0.3);
+      --text:     #e8eaf6;
+      --muted:    rgba(232,234,246,0.45);
+      --faint:    rgba(232,234,246,0.2);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Geist', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* noise */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      opacity: 0.028;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+    }
+
+    /* orbs */
+    .orb { position: fixed; border-radius: 50%; pointer-events: none; z-index: 0; filter: blur(120px); }
+    .orb-1 { width:600px;height:600px;top:-200px;left:-100px; background:radial-gradient(circle,rgba(0,229,255,.07) 0%,transparent 70%); animation:od1 20s ease-in-out infinite alternate; }
+    .orb-2 { width:500px;height:500px;bottom:-150px;right:-100px; background:radial-gradient(circle,rgba(139,92,246,.06) 0%,transparent 70%); animation:od2 25s ease-in-out infinite alternate; }
+    .orb-3 { width:300px;height:300px;top:50%;left:50%;transform:translate(-50%,-50%); background:radial-gradient(circle,rgba(0,229,255,.04) 0%,transparent 70%); animation:od3 18s ease-in-out infinite alternate; }
+    @keyframes od1 { from{transform:translate(0,0) scale(1)} to{transform:translate(80px,60px) scale(1.15)} }
+    @keyframes od2 { from{transform:translate(0,0) scale(1)} to{transform:translate(-60px,-40px) scale(1.1)} }
+    @keyframes od3 { from{transform:translate(-50%,-50%) scale(1)} to{transform:translate(-50%,-50%) scale(1.3)} }
+
+    /* grid bg */
+    .grid-bg {
+      position:fixed;inset:0;z-index:0;pointer-events:none;
+      background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+      background-size:60px 60px;
+      mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 30%,transparent 100%);
+    }
+
+    .z10 { position:relative; z-index:10; }
+
+    /* ── NAV ── */
+    nav {
+      position:sticky;top:0;z-index:200;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:0 40px;height:60px;
+      background:rgba(6,7,13,.8);
+      border-bottom:1px solid var(--border);
+      backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    }
+    @media(max-width:640px){nav{padding:0 18px;}}
+    .nav-logo { display:flex;align-items:center;gap:10px;text-decoration:none; }
+    .nav-logo-mark {
+      width:28px;height:28px;border-radius:7px;flex-shrink:0;
+      background:linear-gradient(135deg,var(--cyan),#7c3aed);
+      display:flex;align-items:center;justify-content:center;
+    }
+    .nav-logo-mark svg { width:14px;height:14px;color:#06070d; }
+    .nav-logo-text { font-family:'Geist Mono',monospace;font-weight:500;font-size:14px;letter-spacing:.05em;color:var(--text); }
+    .nav-links { display:flex;align-items:center;gap:28px; }
+    .nav-links a { font-size:13px;color:var(--muted);text-decoration:none;transition:color .2s; }
+    .nav-links a:hover { color:var(--text); }
+    @media(max-width:640px){.nav-links{display:none;}}
+    .nav-right { display:flex;align-items:center;gap:10px; }
+
+    /* nav auth buttons */
+    .btn-nav-ghost {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+      color:var(--muted);background:transparent;border:1px solid var(--border2);
+      padding:7px 16px;border-radius:6px;cursor:pointer;transition:all .2s;
+    }
+    .btn-nav-ghost:hover { color:var(--text);border-color:rgba(255,255,255,.25); }
+    .btn-nav-solid {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:none;
+      padding:7px 16px;border-radius:6px;cursor:pointer;transition:all .2s;
+    }
+    .btn-nav-solid:hover { background:#fff;box-shadow:0 0 20px var(--cyan-glo); }
+
+    /* logged-in user badge */
+    .user-badge {
+      display:flex;align-items:center;gap:8px;
+      background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.18);
+      padding:5px 12px 5px 6px;border-radius:100px;cursor:pointer;transition:all .2s;
+    }
+    .user-badge:hover { background:rgba(0,229,255,.13); }
+    .user-avatar {
+      width:24px;height:24px;border-radius:50%;
+      background:linear-gradient(135deg,var(--cyan),#7c3aed);
+      display:flex;align-items:center;justify-content:center;
+      font-size:11px;font-weight:600;color:#06070d;letter-spacing:0;
+    }
+    .user-name { font-size:12px;color:var(--cyan);font-weight:500; }
+    .btn-logout {
+      font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+      color:rgba(232,234,246,.35);background:transparent;border:none;cursor:pointer;
+      padding:4px 8px;border-radius:4px;transition:color .2s;
+    }
+    .btn-logout:hover { color:rgba(239,68,68,.8); }
+
+    /* ── HERO ── */
+    .hero {
+      min-height:calc(100vh - 60px);display:flex;flex-direction:column;
+      align-items:center;justify-content:center;text-align:center;
+      padding:80px 24px 60px;position:relative;
+    }
+    .hero-eyebrow {
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:400;
+      letter-spacing:.12em;text-transform:uppercase;color:var(--cyan);
+      background:var(--cyan-dim);border:1px solid rgba(0,229,255,.2);
+      padding:6px 14px;border-radius:100px;margin-bottom:40px;
+    }
+    .eyebrow-dot { width:6px;height:6px;border-radius:50%;background:var(--cyan);animation:epulse 2s ease-in-out infinite; }
+    @keyframes epulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
+    .hero-title {
+      font-family:'Instrument Serif',Georgia,serif;
+      font-size:clamp(44px,8vw,96px);font-weight:400;line-height:1;
+      letter-spacing:-.02em;color:#fff;margin-bottom:12px;max-width:900px;
+    }
+    .hero-title em {
+      font-style:italic;
+      background:linear-gradient(135deg,var(--cyan),#7c3aed);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+    }
+    .hero-sub { font-size:16px;font-weight:300;color:var(--muted);max-width:480px;line-height:1.7;margin-bottom:32px; }
+
+    /* free trial badge */
+    .free-badge {
+      display:inline-flex;align-items:center;gap:6px;
+      font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+      color:rgba(251,191,36,.85);background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);
+      padding:6px 14px;border-radius:100px;margin-bottom:28px;
+    }
+
+    .hero-actions { display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:16px; }
+    .btn-glow {
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:500;
+      letter-spacing:.08em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:1px solid var(--cyan);
+      padding:14px 28px;border-radius:8px;cursor:pointer;transition:all .25s;
+      text-decoration:none;position:relative;overflow:hidden;
+    }
+    .btn-glow::before {
+      content:'';position:absolute;top:50%;left:-100%;width:60%;height:200%;
+      transform:translateY(-50%) skewX(-15deg);background:rgba(255,255,255,.18);transition:left .5s ease;
+    }
+    .btn-glow:hover::before { left:150%; }
+    .btn-glow:hover { background:#fff;border-color:#fff;box-shadow:0 0 40px var(--cyan-glo),0 4px 20px rgba(0,0,0,.5);transform:translateY(-2px); }
+    .btn-ghost {
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;
+      color:var(--muted);background:transparent;border:1px solid var(--border2);
+      padding:14px 28px;border-radius:8px;cursor:pointer;transition:all .25s;text-decoration:none;
+    }
+    .btn-ghost:hover { border-color:rgba(255,255,255,.3);color:var(--text);background:rgba(255,255,255,.04); }
+
+    /* hero preview shards */
+    .hero-preview { display:flex;gap:12px;margin-top:60px;opacity:.6;overflow:hidden;max-width:100%; }
+    .preview-shard { flex-shrink:0;border-radius:12px;border:1px solid var(--border2);overflow:hidden;background:var(--surface); }
+    .preview-shard .inner { background:linear-gradient(135deg,var(--surface2),#161a30);position:relative;width:100%;height:100%; }
+    .preview-shard .inner::after { content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(0,229,255,.05) 0%,transparent 40%,rgba(124,58,237,.05) 100%); }
+    .preview-shard .inner::before {
+      content:'';position:absolute;top:-100%;left:-100%;width:60%;height:200%;
+      background:linear-gradient(105deg,transparent,rgba(255,255,255,.04),transparent);
+      animation:shimShard 4s ease-in-out infinite;
+    }
+    .sa{width:120px;height:120px;transform:rotate(-4deg) translateY(8px);}
+    .sb{width:160px;height:160px;transform:rotate(-1.5deg);}
+    .sc{width:200px;height:200px;}
+    .sd{width:160px;height:160px;transform:rotate(1.5deg);}
+    .se{width:120px;height:120px;transform:rotate(4deg) translateY(8px);}
+    .sb .inner::before{animation-delay:.5s} .sc .inner::before{animation-delay:1s} .sd .inner::before{animation-delay:1.5s} .se .inner::before{animation-delay:2s}
+    @keyframes shimShard { 0%{transform:translateX(-100%);opacity:0} 30%{opacity:1} 70%{opacity:1} 100%{transform:translateX(400%);opacity:0} }
+    @media(max-width:640px){.hero-preview{display:none;}}
+
+    /* ── GENERATE SECTION ── */
+    .section { position:relative;z-index:10;max-width:960px;margin:0 auto;padding:0 24px 90px; }
+
+    .gen-panel {
+      background:var(--surface);border:1px solid var(--border2);border-radius:20px;overflow:hidden;
+      box-shadow:0 0 0 1px rgba(0,0,0,.5),0 40px 80px rgba(0,0,0,.4);
+    }
+    .gen-toolbar {
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+      padding:16px 24px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);
+    }
+    .gen-toolbar-left { display:flex;align-items:center;gap:12px; }
+    .toolbar-icon {
+      width:32px;height:32px;border-radius:8px;
+      background:var(--cyan-dim);border:1px solid rgba(0,229,255,.2);
+      display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    }
+    .toolbar-icon svg { width:15px;height:15px;color:var(--cyan); }
+    .toolbar-title { font-size:14px;font-weight:500;color:var(--text);letter-spacing:-.01em; }
+    .toolbar-sub { font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint); }
+    .model-badge {
+      font-family:'Geist Mono',monospace;font-size:10px;color:var(--cyan);
+      background:var(--cyan-dim);border:1px solid rgba(0,229,255,.15);
+      padding:4px 10px;border-radius:100px;letter-spacing:.04em;
+    }
+
+    /* guest limit banner */
+    .guest-banner {
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+      padding:12px 24px;
+      background:linear-gradient(90deg,rgba(251,191,36,.06),rgba(251,191,36,.03));
+      border-bottom:1px solid rgba(251,191,36,.15);
+    }
+    .guest-banner-left { display:flex;align-items:center;gap:10px; }
+    .guest-banner-icon { font-size:16px; }
+    .guest-banner-text { font-size:13px;color:rgba(251,191,36,.85);font-weight:400; }
+    .guest-banner-text strong { color:rgba(251,191,36,1);font-weight:600; }
+    .btn-banner-login {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;
+      color:#06070d;background:rgba(251,191,36,.9);border:none;
+      padding:8px 18px;border-radius:7px;cursor:pointer;transition:all .2s;white-space:nowrap;
+    }
+    .btn-banner-login:hover { background:#fbbf24;box-shadow:0 0 16px rgba(251,191,36,.4); }
+
+    .gen-body { padding:24px; }
+    .prompt-label { font-family:'Geist Mono',monospace;font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:10px; }
+
+    .prompt-wrapper { position:relative;margin-bottom:16px; }
+    textarea#prompt-input {
+      width:100%;background:rgba(255,255,255,.03);border:1px solid var(--border2);
+      border-radius:12px;padding:18px 18px 48px;color:var(--text);
+      font-family:'Geist',system-ui,sans-serif;font-size:15px;font-weight:300;line-height:1.65;
+      resize:none;outline:none;transition:border-color .2s,box-shadow .2s;caret-color:var(--cyan);
+    }
+    textarea#prompt-input::placeholder { color:var(--faint);font-style:italic; }
+    textarea#prompt-input:focus { border-color:rgba(0,229,255,.35);box-shadow:0 0 0 3px rgba(0,229,255,.07),inset 0 0 20px rgba(0,229,255,.02); }
+    .prompt-footer {
+      position:absolute;bottom:0;left:0;right:0;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 14px;border-top:1px solid var(--border);
+    }
+    #char-count { font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint); }
+    .shortcut-hint { font-family:'Geist Mono',monospace;font-size:10px;color:var(--faint);display:flex;align-items:center;gap:4px; }
+    .kbd { background:rgba(255,255,255,.07);border:1px solid var(--border2);border-radius:4px;padding:2px 5px;font-size:10px; }
+
+    .suggestions { display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;align-items:center; }
+    .suggestions-label { font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-right:4px; }
+    .suggestion-chip {
+      font-size:12px;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border2);
+      border-radius:100px;padding:5px 14px;cursor:pointer;transition:all .2s;font-weight:300;
+    }
+    .suggestion-chip:hover { color:var(--cyan);border-color:rgba(0,229,255,.3);background:var(--cyan-dim); }
+
+    #generate-btn {
+      width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+      font-family:'Geist Mono',monospace;font-size:13px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:none;border-radius:10px;padding:16px;
+      cursor:pointer;transition:all .25s;position:relative;overflow:hidden;
+    }
+    #generate-btn::before {
+      content:'';position:absolute;top:50%;left:-100%;width:60%;height:200%;
+      transform:translateY(-50%) skewX(-15deg);background:rgba(255,255,255,.15);transition:left .5s ease;
+    }
+    #generate-btn:hover::before { left:150%; }
+    #generate-btn:hover:not(:disabled) { background:#fff;box-shadow:0 0 40px var(--cyan-glo),0 4px 16px rgba(0,0,0,.4);transform:translateY(-1px); }
+    #generate-btn:disabled { opacity:.45;cursor:not-allowed;transform:none; }
+
+    /* loading */
+    #loading-state { margin-top:24px;display:none; }
+    .loading-card {
+      background:rgba(255,255,255,.02);border:1px solid var(--border2);border-radius:14px;
+      padding:48px 24px;text-align:center;position:relative;overflow:hidden;
+    }
+    .loading-card::before {
+      content:'';position:absolute;top:0;left:-100%;right:0;bottom:0;
+      background:linear-gradient(90deg,transparent,rgba(0,229,255,.03),transparent);
+      animation:lsweep 2.5s ease-in-out infinite;
+    }
+    @keyframes lsweep { from{left:-100%} to{left:200%} }
+    .loading-ring { width:52px;height:52px;margin:0 auto 18px;position:relative; }
+    .loading-ring::before,.loading-ring::after {
+      content:'';position:absolute;inset:0;border-radius:50%;border:1.5px solid transparent;
+    }
+    .loading-ring::before { border-top-color:var(--cyan);border-right-color:rgba(0,229,255,.3);animation:ringA 1.1s linear infinite; }
+    .loading-ring::after  { border-bottom-color:rgba(124,58,237,.5);inset:6px;animation:ringB 1.7s linear infinite reverse; }
+    @keyframes ringA { to{transform:rotate(360deg)} }
+    @keyframes ringB { to{transform:rotate(360deg)} }
+    .loading-dots { display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:12px; }
+    .ld { width:4px;height:4px;border-radius:50%;background:var(--cyan);animation:ldB 1.2s ease-in-out infinite; }
+    .ld:nth-child(2){animation-delay:.2s} .ld:nth-child(3){animation-delay:.4s}
+    @keyframes ldB { 0%,80%,100%{opacity:.3;transform:scale(.7)} 40%{opacity:1;transform:scale(1.2)} }
+    #loading-text { font-size:14px;color:var(--muted);font-weight:300; }
+    .loading-sub { font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint);margin-top:6px; }
+
+    /* result */
+    #result-state { margin-top:24px;display:none; }
+    .result-card { background:rgba(255,255,255,.02);border:1px solid var(--border2);border-radius:14px;overflow:hidden; }
+    .result-img-wrap { position:relative;overflow:hidden; }
+    .result-img-wrap img { width:100%;display:block;object-fit:cover;max-height:560px;transition:transform .5s ease; }
+    .result-img-wrap:hover img { transform:scale(1.01); }
+    .result-overlay {
+      position:absolute;inset:0;
+      background:linear-gradient(to top,rgba(6,7,13,.9) 0%,rgba(6,7,13,.1) 40%,transparent 60%);
+      opacity:0;transition:opacity .3s;display:flex;align-items:flex-end;justify-content:flex-end;padding:20px;
+    }
+    .result-img-wrap:hover .result-overlay { opacity:1; }
+    .dl-hover-btn {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:none;padding:10px 20px;border-radius:8px;
+      cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .2s;
+    }
+    .dl-hover-btn:hover { background:#fff; }
+    .result-meta {
+      padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;
+      border-top:1px solid var(--border);flex-wrap:wrap;
+    }
+    .result-prompt-display { flex:1;min-width:0; }
+    .result-prompt-label { font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:4px; }
+    #result-prompt { font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:300; }
+    .result-actions { display:flex;gap:8px;flex-shrink:0; }
+    .action-btn-primary {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:1px solid var(--cyan);padding:9px 18px;border-radius:7px;
+      cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap;
+    }
+    .action-btn-primary:hover { background:#fff;border-color:#fff;box-shadow:0 0 20px var(--cyan-glo); }
+    .action-btn-secondary {
+      font-size:12px;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border2);
+      padding:9px 18px;border-radius:7px;cursor:pointer;transition:all .2s;white-space:nowrap;
+    }
+    .action-btn-secondary:hover { color:var(--text);border-color:rgba(255,255,255,.2); }
+
+    /* ── PAYWALL OVERLAY (after 1 free gen, guest only) ── */
+    #paywall-overlay {
+      display:none;margin-top:24px;
+      background:linear-gradient(135deg,rgba(0,229,255,.05),rgba(124,58,237,.07));
+      border:1px solid rgba(0,229,255,.2);border-radius:16px;padding:40px 32px;text-align:center;
+    }
+    .paywall-icon {
+      width:56px;height:56px;border-radius:14px;margin:0 auto 20px;
+      background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);
+      display:flex;align-items:center;justify-content:center;
+    }
+    .paywall-icon svg { width:26px;height:26px;color:var(--cyan); }
+    .paywall-title { font-family:'Instrument Serif',serif;font-size:28px;color:#fff;margin-bottom:10px; }
+    .paywall-sub { font-size:14px;color:var(--muted);font-weight:300;max-width:380px;margin:0 auto 28px;line-height:1.65; }
+    .paywall-perks {
+      display:flex;flex-direction:column;gap:8px;max-width:280px;margin:0 auto 32px;text-align:left;
+    }
+    .paywall-perk {
+      display:flex;align-items:center;gap:10px;
+      font-size:13px;color:var(--muted);font-weight:300;
+    }
+    .perk-check { width:18px;height:18px;border-radius:50%;background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+    .perk-check svg { width:10px;height:10px;color:var(--cyan); }
+    .paywall-actions { display:flex;gap:12px;justify-content:center;flex-wrap:wrap; }
+    .btn-paywall-primary {
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:none;padding:14px 32px;border-radius:9px;
+      cursor:pointer;transition:all .25s;display:flex;align-items:center;gap:8px;
+    }
+    .btn-paywall-primary:hover { background:#fff;box-shadow:0 0 32px var(--cyan-glo); }
+    .btn-paywall-secondary {
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;
+      color:var(--muted);background:transparent;border:1px solid var(--border2);
+      padding:14px 24px;border-radius:9px;cursor:pointer;transition:all .25s;
+    }
+    .btn-paywall-secondary:hover { color:var(--text);border-color:rgba(255,255,255,.25); }
+
+    /* ── STATS ── */
+    .stats-strip {
+      display:grid;grid-template-columns:repeat(3,1fr);
+      border:1px solid var(--border2);border-radius:14px;overflow:hidden;
+      margin-bottom:80px;background:var(--surface);
+    }
+    .stat-cell { padding:28px 24px;text-align:center;border-right:1px solid var(--border); }
+    .stat-cell:last-child { border-right:none; }
+    .stat-value { font-family:'Instrument Serif',serif;font-size:40px;color:#fff;line-height:1;margin-bottom:6px; }
+    .stat-label { font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint); }
+    @media(max-width:640px){
+      .stats-strip{grid-template-columns:1fr;}
+      .stat-cell{border-right:none;border-bottom:1px solid var(--border);}
+      .stat-cell:last-child{border-bottom:none;}
+    }
+
+    /* ── TABS ── */
+    .tab-bar { display:flex;border-bottom:1px solid var(--border);margin-bottom:28px; }
+    .tab-btn {
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:400;letter-spacing:.06em;text-transform:uppercase;
+      color:var(--faint);background:none;border:none;border-bottom:2px solid transparent;
+      padding:14px 20px 14px 0;margin-bottom:-1px;cursor:pointer;transition:all .2s;
+    }
+    .tab-btn + .tab-btn { padding-left:20px; }
+    .tab-btn:hover { color:var(--muted); }
+    .tab-btn.active { color:var(--cyan);border-bottom-color:var(--cyan); }
+
+    /* section header */
+    .section-header { display:flex;align-items:baseline;justify-content:space-between;margin-bottom:24px; }
+    .section-title {
+      font-family:'Geist Mono',monospace;font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;
+      color:var(--muted);display:flex;align-items:center;gap:10px;
+    }
+    .section-title::before { content:'';display:inline-block;width:20px;height:1px;background:var(--cyan); }
+    .section-action {
+      font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint);
+      background:none;border:none;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;
+      display:flex;align-items:center;gap:6px;transition:color .2s;
+    }
+    .section-action:hover { color:var(--cyan); }
+
+    /* gallery */
+    #gallery-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px; }
+    @media(max-width:640px){ #gallery-grid{grid-template-columns:repeat(2,1fr);} }
+    .gallery-card {
+      background:var(--surface2);border:1px solid var(--border2);border-radius:12px;overflow:hidden;
+      cursor:pointer;transition:all .3s cubic-bezier(.25,.46,.45,.94);position:relative;
+    }
+    .gallery-card:hover { border-color:rgba(0,229,255,.25);transform:translateY(-4px);box-shadow:0 20px 40px rgba(0,0,0,.5),0 0 0 1px rgba(0,229,255,.1); }
+    .gallery-card img { width:100%;aspect-ratio:1;object-fit:cover;display:block;transition:transform .5s ease; }
+    .gallery-card:hover img { transform:scale(1.06); }
+    .gallery-card-overlay {
+      position:absolute;bottom:0;left:0;right:0;
+      background:linear-gradient(to top,rgba(6,7,13,.95) 0%,transparent 100%);
+      padding:16px 12px 10px;opacity:0;transform:translateY(4px);transition:all .25s;
+    }
+    .gallery-card:hover .gallery-card-overlay { opacity:1;transform:translateY(0); }
+    .gc-prompt { font-size:11px;color:var(--muted);font-weight:300;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden; }
+    .gc-date { font-family:'Geist Mono',monospace;font-size:9px;color:var(--faint);margin-top:4px; }
+    .skeleton { background:linear-gradient(90deg,var(--surface2) 25%,rgba(255,255,255,.04) 50%,var(--surface2) 75%);background-size:200% 100%;animation:skelShim 2s ease-in-out infinite;border-radius:12px; }
+    .skeleton-cell { aspect-ratio:1; }
+    @keyframes skelShim { from{background-position:200% 0} to{background-position:-200% 0} }
+
+    /* history */
+    #history-list { display:flex;flex-direction:column;gap:10px; }
+    .history-item { display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:12px 16px;transition:all .2s; }
+    .history-item:hover { border-color:rgba(0,229,255,.2);background:rgba(0,229,255,.02); }
+    .history-thumb { width:64px;height:64px;border-radius:8px;overflow:hidden;flex-shrink:0;cursor:pointer;border:1px solid var(--border2); }
+    .history-thumb img { width:100%;height:100%;object-fit:cover;transition:transform .3s; }
+    .history-thumb:hover img { transform:scale(1.1); }
+    .history-meta { flex:1;min-width:0; }
+    .history-prompt { font-size:13px;color:var(--muted);font-weight:300;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px; }
+    .history-date { font-family:'Geist Mono',monospace;font-size:10px;color:var(--faint); }
+    .history-dl-btn { width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;color:var(--faint);transition:all .2s; }
+    .history-dl-btn:hover { background:var(--cyan-dim);border-color:rgba(0,229,255,.3);color:var(--cyan); }
+    .history-dl-btn svg { width:14px;height:14px; }
+
+    /* empty state */
+    .empty-state { text-align:center;padding:60px 24px; }
+    .empty-icon { width:52px;height:52px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;margin:0 auto 18px; }
+    .empty-icon svg { width:22px;height:22px;color:var(--faint); }
+    .empty-title { font-size:14px;color:var(--muted);margin-bottom:6px;font-weight:400; }
+    .empty-sub { font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint); }
+
+    /* ── AUTH MODAL ── */
+    #auth-modal-backdrop {
+      display:none;position:fixed;inset:0;z-index:500;
+      background:rgba(0,0,0,.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      align-items:center;justify-content:center;padding:24px;
+    }
+    #auth-modal-backdrop.open { display:flex; }
+    .auth-modal {
+      background:var(--surface);border:1px solid var(--border2);border-radius:20px;
+      width:100%;max-width:420px;overflow:hidden;
+      box-shadow:0 40px 80px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.5);
+      animation:modalIn .3s cubic-bezier(.34,1.56,.64,1);
+    }
+    @keyframes modalIn { from{opacity:0;transform:scale(.94) translateY(12px)} to{opacity:1;transform:scale(1) translateY(0)} }
+    .auth-modal-header {
+      padding:28px 28px 0;display:flex;align-items:flex-start;justify-content:space-between;
+    }
+    .auth-modal-logo { display:flex;align-items:center;gap:10px;margin-bottom:4px; }
+    .auth-modal-close {
+      width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid var(--border2);
+      color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;flex-shrink:0;
+    }
+    .auth-modal-close:hover { background:rgba(255,255,255,.1);color:var(--text); }
+    .auth-modal-close svg { width:16px;height:16px; }
+    .auth-tabs { display:flex;border-bottom:1px solid var(--border);margin:20px 28px 0; }
+    .auth-tab {
+      font-family:'Geist Mono',monospace;font-size:12px;font-weight:400;letter-spacing:.06em;text-transform:uppercase;
+      color:var(--faint);background:none;border:none;border-bottom:2px solid transparent;
+      padding:10px 0 10px;margin-bottom:-1px;cursor:pointer;transition:all .2s;flex:1;text-align:center;
+    }
+    .auth-tab.active { color:var(--cyan);border-bottom-color:var(--cyan); }
+    .auth-body { padding:24px 28px 28px; }
+    .auth-field { margin-bottom:16px; }
+    .auth-label { font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:8px;display:block; }
+    .auth-input {
+      width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:9px;
+      padding:12px 14px;color:var(--text);font-family:'Geist',system-ui,sans-serif;font-size:14px;font-weight:300;
+      outline:none;transition:border-color .2s,box-shadow .2s;caret-color:var(--cyan);
+    }
+    .auth-input::placeholder { color:var(--faint); }
+    .auth-input:focus { border-color:rgba(0,229,255,.4);box-shadow:0 0 0 3px rgba(0,229,255,.08); }
+    #auth-error {
+      display:none;font-size:12px;color:rgba(239,68,68,.85);background:rgba(239,68,68,.08);
+      border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;
+    }
+    .auth-submit {
+      width:100%;font-family:'Geist Mono',monospace;font-size:13px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+      color:#06070d;background:var(--cyan);border:none;border-radius:9px;padding:14px;
+      cursor:pointer;transition:all .25s;margin-bottom:16px;
+    }
+    .auth-submit:hover { background:#fff;box-shadow:0 0 32px var(--cyan-glo); }
+    .auth-submit:disabled { opacity:.5;cursor:not-allowed; }
+    .auth-divider { display:flex;align-items:center;gap:12px;margin-bottom:16px; }
+    .auth-divider-line { flex:1;height:1px;background:var(--border); }
+    .auth-divider-text { font-family:'Geist Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint); }
+    .auth-switch { font-size:12px;color:var(--faint);text-align:center; }
+    .auth-switch button { color:var(--cyan);background:none;border:none;cursor:pointer;font-size:12px;text-decoration:underline;text-underline-offset:2px; }
+    .auth-unlimited-note {
+      background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.15);border-radius:10px;
+      padding:12px 14px;margin-bottom:20px;
+    }
+    .auth-unlimited-note p { font-size:12px;color:rgba(0,229,255,.75);line-height:1.5;font-weight:300; }
+    .auth-unlimited-note strong { color:var(--cyan);font-weight:600; }
+
+    /* ── TOAST ── */
+    #toast-container { position:fixed;bottom:28px;right:28px;z-index:9999;display:flex;flex-direction:column;gap:10px;pointer-events:none; }
+    .toast {
+      pointer-events:auto;display:flex;align-items:center;gap:12px;
+      padding:14px 18px;border-radius:12px;font-size:13px;font-weight:400;
+      min-width:260px;max-width:380px;
+      animation:toastIn .35s cubic-bezier(.34,1.56,.64,1) forwards;backdrop-filter:blur(24px);
+    }
+    @keyframes toastIn { from{opacity:0;transform:translateX(20px) scale(.95)} to{opacity:1;transform:translateX(0) scale(1)} }
+    .toast-exit { animation:toastOut .25s ease forwards; }
+    @keyframes toastOut { from{opacity:1;transform:translateX(0) scale(1)} to{opacity:0;transform:translateX(12px) scale(.97)} }
+    .toast-icon { width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;font-weight:600; }
+    .toast-success { background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:rgba(232,234,246,.85); }
+    .toast-success .toast-icon { background:rgba(0,229,255,.15);color:var(--cyan); }
+    .toast-error { background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:rgba(232,234,246,.85); }
+    .toast-error .toast-icon { background:rgba(239,68,68,.15);color:#f87171; }
+    .toast-info { background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);color:rgba(232,234,246,.85); }
+    .toast-info .toast-icon { background:rgba(124,58,237,.15);color:#a78bfa; }
+
+    /* footer */
+    footer {
+      position:relative;z-index:10;border-top:1px solid var(--border);
+      padding:28px 40px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;
+    }
+    @media(max-width:640px){footer{padding:24px 18px;}}
+    .footer-brand { display:flex;align-items:center;gap:8px; }
+    .footer-wordmark { font-family:'Geist Mono',monospace;font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.06em; }
+    .footer-copy { font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint); }
+
+    /* scroll reveal */
+    .reveal { opacity:0;transform:translateY(24px);transition:opacity .65s ease,transform .65s ease; }
+    .reveal.visible { opacity:1;transform:translateY(0); }
+
+    /* responsive tweaks */
+    @media(max-width:640px){
+      .result-meta{flex-direction:column;align-items:flex-start;}
+      .paywall-perks{max-width:100%;}
+    }
+  </style>
+</head>
+<body>
+  <!-- Ambient -->
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+  <div class="orb orb-3" aria-hidden="true"></div>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <!-- Toast -->
+  <div id="toast-container" role="status" aria-live="polite"></div>
+
+  <!-- ══════════════ AUTH MODAL ══════════════ -->
+  <div id="auth-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="auth-modal">
+      <div class="auth-modal-header">
+        <div>
+          <div class="auth-modal-logo">
+            <div class="nav-logo-mark" style="width:24px;height:24px;border-radius:6px;" aria-hidden="true">
+              <svg style="width:12px;height:12px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+              </svg>
+            </div>
+            <span style="font-family:'Geist Mono',monospace;font-size:13px;font-weight:500;letter-spacing:.05em;" id="auth-modal-title">DREAMFORGE</span>
+          </div>
+        </div>
+        <button class="auth-modal-close" onclick="closeAuthModal()" aria-label="Close">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="auth-tabs">
+        <button id="auth-tab-login"  class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
+        <button id="auth-tab-signup" class="auth-tab"        onclick="switchAuthTab('signup')">Create Account</button>
+      </div>
+
+      <div class="auth-body">
+        <!-- Unlimited perk note -->
+        <div class="auth-unlimited-note">
+          <p>✦ <strong>Unlimited generations</strong> with a free account — sign in or sign up to keep creating forever.</p>
+        </div>
+
+        <!-- Error -->
+        <div id="auth-error" role="alert"></div>
+
+        <!-- Name field (signup only) -->
+        <div class="auth-field" id="name-field" style="display:none;">
+          <label class="auth-label" for="auth-name">Display Name</label>
+          <input class="auth-input" type="text" id="auth-name" placeholder="Your name" autocomplete="name" />
+        </div>
+
+        <!-- Email -->
+        <div class="auth-field">
+          <label class="auth-label" for="auth-email">Email</label>
+          <input class="auth-input" type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+
+        <!-- Password -->
+        <div class="auth-field">
+          <label class="auth-label" for="auth-password">Password</label>
+          <input class="auth-input" type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+
+        <!-- Submit -->
+        <button class="auth-submit" id="auth-submit-btn" onclick="handleAuthSubmit()">Sign In</button>
+
+        <div class="auth-divider">
+          <div class="auth-divider-line"></div>
+          <span class="auth-divider-text">or</span>
+          <div class="auth-divider-line"></div>
+        </div>
+
+        <p class="auth-switch" id="auth-switch-text">
+          Don't have an account?
+          <button onclick="switchAuthTab('signup')">Create one free</button>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ NAV ══════════════ -->
+  <nav>
+    <a href="#" class="nav-logo" aria-label="DreamForge home">
+      <div class="nav-logo-mark" aria-hidden="true">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+        </svg>
+      </div>
+      <span class="nav-logo-text">DREAMFORGE</span>
+    </a>
+
+    <div class="nav-links">
+      <a href="#generate">Generate</a>
+      <a href="#gallery-section">Gallery</a>
+      <a href="#gallery-section" onclick="event.preventDefault();showHistoryTab()">History</a>
+    </div>
+
+    <!-- Nav right: guest buttons OR user badge -->
+    <div class="nav-right" id="nav-auth-area">
+      <!-- Filled by JS -->
+    </div>
+  </nav>
+
+  <!-- ══════════════ HERO ══════════════ -->
+  <section class="hero z10" aria-labelledby="hero-heading">
+    <div class="hero-eyebrow">
+      <div class="eyebrow-dot"></div>
+      DreamShaper 8 LCM · Cloudflare AI
+    </div>
+
+    <h1 class="hero-title" id="hero-heading">
+      Imagine it.<br /><em>See it</em> instantly.
+    </h1>
+
+    <p class="hero-sub">
+      Type any idea. Watch it materialize in seconds. One free image to try — then sign in for unlimited creations.
+    </p>
+
+    <div class="free-badge">
+      ✦ 1 free image · unlimited after sign-in
+    </div>
+
+    <div class="hero-actions">
+      <button class="btn-glow" onclick="scrollToGenerate()">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+        </svg>
+        Start Creating
+      </button>
+      <button class="btn-ghost" onclick="openAuthModal('signup')">
+        Sign Up Free — Unlimited
+        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12h15m0 0-6.75-6.75M19.5 12l-6.75 6.75"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="hero-preview" aria-hidden="true">
+      <div class="preview-shard sa"><div class="inner"></div></div>
+      <div class="preview-shard sb"><div class="inner"></div></div>
+      <div class="preview-shard sc"><div class="inner"></div></div>
+      <div class="preview-shard sd"><div class="inner"></div></div>
+      <div class="preview-shard se"><div class="inner"></div></div>
+    </div>
+  </section>
+
+  <!-- ══════════════ GENERATE ══════════════ -->
+  <section id="generate" class="section reveal" aria-labelledby="gen-heading">
+    <div class="gen-panel">
+      <!-- Toolbar -->
+      <div class="gen-toolbar">
+        <div class="gen-toolbar-left">
+          <div class="toolbar-icon" aria-hidden="true">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="toolbar-title" id="gen-heading">Image Generator</div>
+            <div class="toolbar-sub">Describe your vision below</div>
+          </div>
+        </div>
+        <div class="model-badge">@cf/lykon/dreamshaper-8-lcm</div>
+      </div>
+
+      <!-- Guest banner (shown when guest has 1 free gen left) -->
+      <div class="guest-banner" id="guest-banner">
+        <div class="guest-banner-left">
+          <span class="guest-banner-icon">⚡</span>
+          <span class="guest-banner-text">
+            <strong>1 free image</strong> remaining — sign in for <strong>unlimited</strong> generations.
+          </span>
+        </div>
+        <button class="btn-banner-login" onclick="openAuthModal('signup')">Sign Up Free</button>
+      </div>
+
+      <!-- Body -->
+      <div class="gen-body">
+        <div class="prompt-label">Prompt</div>
+
+        <div class="prompt-wrapper">
+          <textarea
+            id="prompt-input"
+            rows="5"
+            maxlength="1000"
+            placeholder="A lone astronaut drifting through a vast nebula of violet and gold, photorealistic, cinematic, 8K..."
+            aria-label="Image generation prompt"
+          ></textarea>
+          <div class="prompt-footer">
+            <span id="char-count">0 / 1000</span>
+            <div class="shortcut-hint">
+              <kbd class="kbd">Ctrl</kbd><span>+</span><kbd class="kbd">↵</kbd><span>to generate</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="suggestions" role="group" aria-label="Prompt suggestions">
+          <span class="suggestions-label">Try</span>
+          <button class="suggestion-chip" onclick="setPrompt(this)">Cyberpunk samurai</button>
+          <button class="suggestion-chip" onclick="setPrompt(this)">Enchanted forest at dawn</button>
+          <button class="suggestion-chip" onclick="setPrompt(this)">Astronaut on alien planet</button>
+          <button class="suggestion-chip" onclick="setPrompt(this)">Art deco portrait</button>
+          <button class="suggestion-chip" onclick="setPrompt(this)">Underwater city ruins</button>
+        </div>
+
+        <button id="generate-btn" onclick="generateImage()" aria-label="Generate image from prompt">
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+          </svg>
+          Generate Image
+        </button>
+
+        <!-- Loading -->
+        <div id="loading-state">
+          <div class="loading-card">
+            <div class="loading-ring" aria-hidden="true"></div>
+            <div class="loading-dots" aria-hidden="true">
+              <div class="ld"></div><div class="ld"></div><div class="ld"></div>
+            </div>
+            <p id="loading-text">Forging your image…</p>
+            <p class="loading-sub">5 – 15 seconds</p>
+          </div>
+        </div>
+
+        <!-- Result -->
+        <div id="result-state" role="region" aria-label="Generated image">
+          <div class="result-card">
+            <div class="result-img-wrap">
+              <img id="generated-image" src="" alt="AI generated image" />
+              <div class="result-overlay">
+                <button class="dl-hover-btn" onclick="downloadImage()" aria-label="Download image">
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+                  </svg>
+                  Download
+                </button>
+              </div>
+            </div>
+            <div class="result-meta">
+              <div class="result-prompt-display">
+                <div class="result-prompt-label">Prompt</div>
+                <div id="result-prompt"></div>
+              </div>
+              <div class="result-actions">
+                <button class="action-btn-primary" onclick="downloadImage()">
+                  <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+                  </svg>
+                  Save
+                </button>
+                <button class="action-btn-secondary" onclick="generateAgain()">Retry</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Paywall (shown after 1 free gen for guests) -->
+        <div id="paywall-overlay" role="region" aria-label="Sign in required">
+          <div class="paywall-icon">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+            </svg>
+          </div>
+          <h2 class="paywall-title">You've had a taste 🎨</h2>
+          <p class="paywall-sub">
+            Create a free account to generate <strong style="color:var(--cyan)">unlimited images</strong> — no credit card, no limits.
+          </p>
+          <div class="paywall-perks">
+            <div class="paywall-perk">
+              <div class="perk-check">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+              </div>
+              Unlimited image generations
+            </div>
+            <div class="paywall-perk">
+              <div class="perk-check">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+              </div>
+              Save full prompt history
+            </div>
+            <div class="paywall-perk">
+              <div class="perk-check">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+              </div>
+              Access community gallery
+            </div>
+            <div class="paywall-perk">
+              <div class="perk-check">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+              </div>
+              100% free — forever
+            </div>
+          </div>
+          <div class="paywall-actions">
+            <button class="btn-paywall-primary" onclick="openAuthModal('signup')">
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+              </svg>
+              Create Free Account
+            </button>
+            <button class="btn-paywall-secondary" onclick="openAuthModal('login')">Sign In</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ STATS ══════════════ -->
+  <section class="section reveal" aria-label="Statistics" style="padding-bottom:80px;">
+    <div class="stats-strip">
+      <div class="stat-cell">
+        <div class="stat-value">∞</div>
+        <div class="stat-label">Possibilities</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value">8</div>
+        <div class="stat-label">Steps to render</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-value" style="font-size:28px;padding-top:6px;">Free</div>
+        <div class="stat-label" style="margin-top:10px;">No credit card</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ GALLERY + HISTORY ══════════════ -->
+  <section id="gallery-section" class="section reveal" aria-label="Gallery and history">
+    <div class="tab-bar" role="tablist">
+      <button id="tab-gallery" class="tab-btn active" onclick="switchTab('gallery', this)"
+        role="tab" aria-selected="true" aria-controls="panel-gallery">Gallery</button>
+      <button id="tab-history" class="tab-btn" onclick="switchTab('history', this)"
+        role="tab" aria-selected="false" aria-controls="panel-history">History</button>
+    </div>
+
+    <!-- Gallery -->
+    <div id="panel-gallery" role="tabpanel" aria-labelledby="tab-gallery">
+      <div class="section-header">
+        <div class="section-title">Recent generations</div>
+        <button class="section-action" onclick="loadGallery()">
+          <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+          </svg>
+          Refresh
+        </button>
+      </div>
+      <div id="gallery-grid" aria-label="Image gallery">
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+        <div class="skeleton skeleton-cell"></div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <div class="section-header">
+        <div class="section-title">This session</div>
+        <button class="section-action" onclick="clearHistory()" style="color:rgba(239,68,68,.5);">Clear all</button>
+      </div>
+      <div id="history-list"></div>
+      <div id="history-empty" class="empty-state" hidden>
+        <div class="empty-icon">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+          </svg>
+        </div>
+        <p class="empty-title">No history yet</p>
+        <p class="empty-sub">Generate your first image above</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ FOOTER ══════════════ -->
+  <footer>
+    <div class="footer-brand">
+      <div class="nav-logo-mark" style="width:22px;height:22px;border-radius:6px;" aria-hidden="true">
+        <svg style="width:11px;height:11px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>
+        </svg>
+      </div>
+      <span class="footer-wordmark">DREAMFORGE</span>
+    </div>
+    <p class="footer-copy">Powered by Cloudflare AI · DreamShaper 8 LCM · Neon</p>
+  </footer>
+
+  <!-- ══════════════ JAVASCRIPT ══════════════ -->
+  <script>
+    /* ─────────────────────────────────────────
+       AUTH STATE  (client-side, localStorage)
+       In production swap this for a real JWT/
+       session-based auth system.
+    ───────────────────────────────────────── */
+    var GUEST_LIMIT = 1; // free generations before paywall
+
+    var authState = {
+      user: null,  // { name, email } or null
+      guestCount: 0,
+    };
+
+    function loadAuthState() {
+      try {
+        var saved = localStorage.getItem('df_auth');
+        if (saved) { authState.user = JSON.parse(saved); }
+        authState.guestCount = parseInt(localStorage.getItem('df_guest_count') || '0', 10);
+      } catch(e) {
+        authState.user = null;
+        authState.guestCount = 0;
+      }
+    }
+
+    function saveAuthState() {
+      try {
+        if (authState.user) {
+          localStorage.setItem('df_auth', JSON.stringify(authState.user));
+        } else {
+          localStorage.removeItem('df_auth');
+        }
+        localStorage.setItem('df_guest_count', String(authState.guestCount));
+      } catch(e) {}
+    }
+
+    function isLoggedIn() {
+      return authState.user !== null;
+    }
+
+    function canGenerate() {
+      if (isLoggedIn()) return true;
+      return authState.guestCount < GUEST_LIMIT;
+    }
+
+    /* ── NAV auth area ── */
+    function renderNavAuth() {
+      var area = document.getElementById('nav-auth-area');
+      if (isLoggedIn()) {
+        var initials = (authState.user.name || authState.user.email || 'U')
+          .trim().split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
+        area.innerHTML =
+          '<div class="user-badge" onclick="openAuthModal(\'login\')" title="Account">' +
+            '<div class="user-avatar">' + escapeHtml(initials) + '</div>' +
+            '<span class="user-name">' + escapeHtml((authState.user.name || authState.user.email).split(' ')[0]) + '</span>' +
+          '</div>' +
+          '<button class="btn-logout" onclick="logout()">Sign out</button>';
+      } else {
+        area.innerHTML =
+          '<button class="btn-nav-ghost" onclick="openAuthModal(\'login\')">Sign In</button>' +
+          '<button class="btn-nav-solid" onclick="openAuthModal(\'signup\')">Sign Up Free</button>';
+      }
+    }
+
+    /* ── Guest banner ── */
+    function updateGuestBanner() {
+      var banner = document.getElementById('guest-banner');
+      if (isLoggedIn()) {
+        banner.style.display = 'none';
+      } else {
+        banner.style.display = 'flex';
+        var remaining = Math.max(0, GUEST_LIMIT - authState.guestCount);
+        banner.querySelector('.guest-banner-text').innerHTML =
+          '<strong>' + remaining + ' free image' + (remaining !== 1 ? 's' : '') + '</strong>' +
+          ' remaining — sign in for <strong>unlimited</strong> generations.';
+      }
+    }
+
+    /* ─────────────────────────────────────────
+       AUTH MODAL
+    ───────────────────────────────────────── */
+    var currentAuthTab = 'login';
+
+    function openAuthModal(tab) {
+      currentAuthTab = tab || 'login';
+      switchAuthTab(currentAuthTab);
+      clearAuthForm();
+      document.getElementById('auth-modal-backdrop').classList.add('open');
+      setTimeout(function(){
+        var el = document.getElementById('auth-email');
+        if (el) el.focus();
+      }, 100);
+    }
+
+    function closeAuthModal() {
+      document.getElementById('auth-modal-backdrop').classList.remove('open');
+    }
+
+    function switchAuthTab(tab) {
+      currentAuthTab = tab;
+      document.getElementById('auth-tab-login').classList.toggle('active', tab === 'login');
+      document.getElementById('auth-tab-signup').classList.toggle('active', tab === 'signup');
+      document.getElementById('name-field').style.display = tab === 'signup' ? 'block' : 'none';
+      document.getElementById('auth-submit-btn').textContent = tab === 'login' ? 'Sign In' : 'Create Account';
+      document.getElementById('auth-error').style.display = 'none';
+      document.getElementById('auth-switch-text').innerHTML = tab === 'login'
+        ? 'Don\'t have an account? <button onclick="switchAuthTab(\'signup\')">Create one free</button>'
+        : 'Already have an account? <button onclick="switchAuthTab(\'login\')">Sign in</button>';
+      if (tab === 'signup') {
+        document.getElementById('auth-password').setAttribute('autocomplete','new-password');
+      } else {
+        document.getElementById('auth-password').setAttribute('autocomplete','current-password');
+      }
+    }
+
+    function clearAuthForm() {
+      document.getElementById('auth-name').value = '';
+      document.getElementById('auth-email').value = '';
+      document.getElementById('auth-password').value = '';
+      document.getElementById('auth-error').style.display = 'none';
+    }
+
+    function showAuthError(msg) {
+      var el = document.getElementById('auth-error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function handleAuthSubmit() {
+      var name     = document.getElementById('auth-name').value.trim();
+      var email    = document.getElementById('auth-email').value.trim();
+      var password = document.getElementById('auth-password').value;
+      var btn      = document.getElementById('auth-submit-btn');
+
+      /* Basic validation */
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showAuthError('Please enter a valid email address.');
+        return;
+      }
+      if (!password || password.length < 6) {
+        showAuthError('Password must be at least 6 characters.');
+        return;
+      }
+      if (currentAuthTab === 'signup' && !name) {
+        showAuthError('Please enter your display name.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = currentAuthTab === 'login' ? 'Signing in…' : 'Creating account…';
+
+      /*
+        NOTE: This is a CLIENT-SIDE auth simulation using localStorage.
+        For production, replace with a real backend auth system (e.g. Supabase Auth,
+        Auth.js, Clerk, etc.). The pattern here stores hashed credentials locally
+        just to demonstrate the UX gate — do NOT use as production auth.
+      */
+      setTimeout(function() {
+        try {
+          if (currentAuthTab === 'signup') {
+            /* Check if already exists */
+            var existing = localStorage.getItem('df_user_' + email);
+            if (existing) {
+              showAuthError('An account with this email already exists. Try signing in.');
+              btn.disabled = false;
+              btn.textContent = 'Create Account';
+              return;
+            }
+            /* Store user (password stored as simple hash for demo) */
+            var userData = { name: name, email: email, pw: simpleHash(password) };
+            localStorage.setItem('df_user_' + email, JSON.stringify(userData));
+            authState.user = { name: name, email: email };
+          } else {
+            /* Login */
+            var storedRaw = localStorage.getItem('df_user_' + email);
+            if (!storedRaw) {
+              showAuthError('No account found with this email. Try signing up.');
+              btn.disabled = false;
+              btn.textContent = 'Sign In';
+              return;
+            }
+            var stored = JSON.parse(storedRaw);
+            if (stored.pw !== simpleHash(password)) {
+              showAuthError('Incorrect password. Please try again.');
+              btn.disabled = false;
+              btn.textContent = 'Sign In';
+              return;
+            }
+            authState.user = { name: stored.name, email: stored.email };
+          }
+
+          saveAuthState();
+          closeAuthModal();
+          renderNavAuth();
+          updateGuestBanner();
+          updatePaywallVisibility();
+
+          showToast(
+            currentAuthTab === 'signup'
+              ? 'Account created! Generate unlimited images.'
+              : 'Welcome back, ' + (authState.user.name || authState.user.email).split(' ')[0] + '!',
+            'success'
+          );
+        } catch(e) {
+          showAuthError('Something went wrong. Please try again.');
+          btn.disabled = false;
+          btn.textContent = currentAuthTab === 'login' ? 'Sign In' : 'Create Account';
+        }
+      }, 600); /* Simulate network delay */
+    }
+
+    /* Allow Enter key in auth inputs */
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && document.getElementById('auth-modal-backdrop').classList.contains('open')) {
+        handleAuthSubmit();
+      }
+      if (e.key === 'Escape' && document.getElementById('auth-modal-backdrop').classList.contains('open')) {
+        closeAuthModal();
+      }
+    });
+
+    /* Close modal on backdrop click */
+    document.getElementById('auth-modal-backdrop').addEventListener('click', function(e) {
+      if (e.target === this) closeAuthModal();
+    });
+
+    function logout() {
+      authState.user = null;
+      saveAuthState();
+      renderNavAuth();
+      updateGuestBanner();
+      updatePaywallVisibility();
+      showToast('Signed out.', 'info');
+    }
+
+    /* Simple non-crypto hash for demo purposes */
+    function simpleHash(str) {
+      var hash = 0;
+      for (var i = 0; i < str.length; i++) {
+        var c = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + c;
+        hash = hash & hash;
+      }
+      return 'h' + Math.abs(hash).toString(16);
+    }
+
+    /* ─────────────────────────────────────────
+       PAYWALL VISIBILITY
+    ───────────────────────────────────────── */
+    function updatePaywallVisibility() {
+      var paywall = document.getElementById('paywall-overlay');
+      var genBtn  = document.getElementById('generate-btn');
+      var genBody = document.querySelector('.gen-body');
+
+      if (!isLoggedIn() && authState.guestCount >= GUEST_LIMIT) {
+        paywall.style.display = 'block';
+        genBtn.style.display  = 'none';
+      } else {
+        paywall.style.display = 'none';
+        genBtn.style.display  = 'flex';
+      }
+    }
+
+    /* ─────────────────────────────────────────
+       GENERATION LOGIC (unchanged from v2)
+    ───────────────────────────────────────── */
+    var currentImageData = null;
+    var currentPrompt    = '';
+    var sessionHistory   = [];
+    var isGenerating     = false;
+
+    var loadingMessages = [
+      'Forging your image…',
+      'Painting the pixels…',
+      'Summoning creativity…',
+      'Weaving light and shadow…',
+      'Crystallizing your vision…',
+    ];
+
+    function loadSessionHistory() {
+      try {
+        sessionHistory = JSON.parse(localStorage.getItem('df_history') || '[]');
+      } catch(e) {
+        sessionHistory = [];
+      }
+    }
+
+    var promptInput    = document.getElementById('prompt-input');
+    var generateBtn    = document.getElementById('generate-btn');
+    var loadingState   = document.getElementById('loading-state');
+    var resultState    = document.getElementById('result-state');
+    var generatedImage = document.getElementById('generated-image');
+    var resultPromptEl = document.getElementById('result-prompt');
+    var charCountEl    = document.getElementById('char-count');
+    var loadingText    = document.getElementById('loading-text');
+
+    promptInput.addEventListener('input', function() {
+      var len = promptInput.value.length;
+      charCountEl.textContent = len + ' / 1000';
+      charCountEl.style.color = len > 900 ? '#f97316' : '';
+    });
+
+    promptInput.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { generateImage(); }
+    });
+
+    function scrollToGenerate() {
+      document.getElementById('generate').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function showHistoryTab() {
+      var btn = document.getElementById('tab-history');
+      switchTab('history', btn);
+      document.getElementById('gallery-section').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function setPrompt(btn) {
+      promptInput.value = btn.textContent.trim();
+      charCountEl.textContent = promptInput.value.length + ' / 1000';
+      promptInput.focus();
+    }
+
+    function generateAgain() {
+      resultState.style.display = 'none';
+      generateImage();
+    }
+
+    async function generateImage() {
+      if (isGenerating) return;
+
+      /* Auth / quota gate */
+      if (!canGenerate()) {
+        updatePaywallVisibility();
+        document.getElementById('paywall-overlay').scrollIntoView({ behavior: 'smooth' });
+        showToast('Sign in for unlimited generations!', 'info');
+        return;
+      }
+
+      var prompt = promptInput.value.trim();
+      if (!prompt) {
+        showToast('Please enter a prompt first.', 'error');
+        promptInput.focus();
+        return;
+      }
+      if (prompt.length < 3) {
+        showToast('Prompt must be at least 3 characters.', 'error');
+        return;
+      }
+
+      isGenerating    = true;
+      currentPrompt   = prompt;
+
+      generateBtn.disabled = true;
+      generateBtn.innerHTML =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:ringA 0.9s linear infinite;">' +
+          '<path stroke-linecap="round" d="M12 3a9 9 0 1 0 9 9" />' +
+        '</svg>' +
+        'Generating…';
+
+      resultState.style.display  = 'none';
+      loadingState.style.display = 'block';
+
+      var msgIdx = 0;
+      var msgInterval = setInterval(function() {
+        msgIdx = (msgIdx + 1) % loadingMessages.length;
+        loadingText.textContent = loadingMessages[msgIdx];
+      }, 3000);
+
+      try {
+        var response = await fetch('/api/generate', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ prompt: prompt }),
+        });
+
+        var data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Generation failed. Please try again.');
+        }
+
+        generatedImage.src       = data.image;
+        resultPromptEl.textContent = prompt;
+        currentImageData         = data.image;
+
+        loadingState.style.display = 'none';
+        resultState.style.display  = 'block';
+
+        /* Increment guest count only if not logged in */
+        if (!isLoggedIn()) {
+          authState.guestCount += 1;
+          saveAuthState();
+          updateGuestBanner();
+          updatePaywallVisibility();
+        }
+
+        addToHistory(prompt, data.image);
+        showToast('Image generated.', 'success');
+        setTimeout(loadGallery, 1500);
+
+      } catch(err) {
+        loadingState.style.display = 'none';
+        showToast(err.message, 'error', 6000);
+      } finally {
+        clearInterval(msgInterval);
+        isGenerating         = false;
+        generateBtn.disabled = false;
+        generateBtn.innerHTML =
+          '<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">' +
+            '<path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>' +
+          '</svg>' +
+          'Generate Image';
+      }
+    }
+
+    /* ── Download ── */
+    function downloadImage() {
+      if (!currentImageData) return;
+      var a = document.createElement('a');
+      a.href     = currentImageData;
+      a.download = 'dreamforge-' + Date.now() + '.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('Image saved.', 'success');
+    }
+
+    /* ── History ── */
+    function addToHistory(prompt, image) {
+      var entry = { prompt: prompt, image: image, timestamp: new Date().toISOString(), id: Date.now() };
+      sessionHistory.unshift(entry);
+      if (sessionHistory.length > 20) sessionHistory = sessionHistory.slice(0, 20);
+      try { localStorage.setItem('df_history', JSON.stringify(sessionHistory)); } catch(e) {}
+      renderHistory();
+    }
+
+    function renderHistory() {
+      var list  = document.getElementById('history-list');
+      var empty = document.getElementById('history-empty');
+      if (sessionHistory.length === 0) {
+        list.innerHTML = '';
+        empty.hidden   = false;
+        return;
+      }
+      empty.hidden = true;
+      list.innerHTML = sessionHistory.map(function(entry) {
+        return '<div class="history-item">' +
+          '<div class="history-thumb" onclick="viewHistoryImage(' + entry.id + ')" role="button" tabindex="0" aria-label="View image">' +
+            '<img src="' + escapeHtml(entry.image) + '" alt="" loading="lazy" />' +
+          '</div>' +
+          '<div class="history-meta">' +
+            '<p class="history-prompt">' + escapeHtml(entry.prompt) + '</p>' +
+            '<p class="history-date">' + formatDate(entry.timestamp) + '</p>' +
+          '</div>' +
+          '<button class="history-dl-btn" onclick="downloadHistoryImage(' + entry.id + ')" aria-label="Download image">' +
+            '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">' +
+              '<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>' +
+            '</svg>' +
+          '</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    function viewHistoryImage(id) {
+      var entry = sessionHistory.find(function(e){ return e.id == id; });
+      if (!entry) return;
+      currentImageData = entry.image;
+      currentPrompt    = entry.prompt;
+      generatedImage.src        = entry.image;
+      resultPromptEl.textContent = entry.prompt;
+      resultState.style.display = 'block';
+      document.getElementById('generate').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function downloadHistoryImage(id) {
+      var entry = sessionHistory.find(function(e){ return e.id == id; });
+      if (!entry) return;
+      var a = document.createElement('a');
+      a.href     = entry.image;
+      a.download = 'dreamforge-' + id + '.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast('Image saved.', 'success');
+    }
+
+    function clearHistory() {
+      if (!confirm('Clear all history? This cannot be undone.')) return;
+      sessionHistory = [];
+      try { localStorage.removeItem('df_history'); } catch(e) {}
+      renderHistory();
+      showToast('History cleared.', 'info');
+    }
+
+    /* ── Gallery ── */
+    async function loadGallery() {
+      var grid = document.getElementById('gallery-grid');
+      grid.innerHTML = Array(8).fill('<div class="skeleton skeleton-cell"></div>').join('');
+      try {
+        var res  = await fetch('/api/gallery');
+        var data = await res.json();
+        if (!data.generations || data.generations.length === 0) {
+          grid.innerHTML =
+            '<div style="grid-column:1/-1;">' +
+              '<div class="empty-state">' +
+                '<div class="empty-icon">' +
+                  '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">' +
+                    '<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>' +
+                  '</svg>' +
+                '</div>' +
+                '<p class="empty-title">Gallery is empty</p>' +
+                '<p class="empty-sub">Be the first to generate an image</p>' +
+              '</div>' +
+            '</div>';
+          return;
+        }
+        grid.innerHTML = data.generations.map(function(gen) {
+          return '<div class="gallery-card" onclick="useGalleryPrompt(\'' + escapeAttr(gen.prompt) + '\')" role="button" tabindex="0" aria-label="Use this prompt">' +
+            '<img src="' + escapeHtml(gen.image_data) + '" alt="" loading="lazy" />' +
+            '<div class="gallery-card-overlay">' +
+              '<p class="gc-prompt">' + escapeHtml(gen.prompt) + '</p>' +
+              '<p class="gc-date">' + formatDate(gen.created_at) + '</p>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      } catch(err) {
+        grid.innerHTML =
+          '<div style="grid-column:1/-1;">' +
+            '<div class="empty-state">' +
+              '<p class="empty-title">Couldn\'t load gallery</p>' +
+              '<p class="empty-sub">Check your database configuration</p>' +
+            '</div>' +
+          '</div>';
+      }
+    }
+
+    function useGalleryPrompt(prompt) {
+      promptInput.value = prompt;
+      charCountEl.textContent = prompt.length + ' / 1000';
+      document.getElementById('generate').scrollIntoView({ behavior: 'smooth' });
+      promptInput.focus();
+      showToast('Prompt loaded — click Generate.', 'info');
+    }
+
+    /* ── Tabs ── */
+    function switchTab(tab, btn) {
+      document.querySelectorAll('.tab-btn').forEach(function(b) {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
+      btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
+      var gp = document.getElementById('panel-gallery');
+      var hp = document.getElementById('panel-history');
+      if (tab === 'gallery') {
+        gp.hidden = false; hp.hidden = true;
+      } else {
+        gp.hidden = true; hp.hidden = false;
+        renderHistory();
+      }
+    }
+
+    /* ── Toast ── */
+    function showToast(message, type, duration) {
+      type     = type     || 'info';
+      duration = duration || 4000;
+      var icons = { success: '✓', error: '✕', info: '◆' };
+      var container = document.getElementById('toast-container');
+      var toast = document.createElement('div');
+      toast.className = 'toast toast-' + type;
+      toast.innerHTML =
+        '<div class="toast-icon">' + (icons[type] || '·') + '</div>' +
+        '<span>' + escapeHtml(String(message)) + '</span>';
+      container.appendChild(toast);
+      setTimeout(function() {
+        toast.classList.add('toast-exit');
+        setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 280);
+      }, duration);
+    }
+
+    /* ── Utilities ── */
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    function escapeAttr(str) {
+      return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
+    }
+    function formatDate(isoString) {
+      if (!isoString) return '';
+      try {
+        var d = new Date(isoString);
+        return d.toLocaleDateString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+      } catch(e) { return ''; }
+    }
+
+    /* ── Scroll reveal ── */
+    var revealObs = new IntersectionObserver(function(entries) {
+      entries.forEach(function(el) { if (el.isIntersecting) el.target.classList.add('visible'); });
+    }, { threshold: 0.08 });
+    document.querySelectorAll('.reveal').forEach(function(el) { revealObs.observe(el); });
+
+    /* ── INIT ── */
+    loadAuthState();
+    loadSessionHistory();
+    renderNavAuth();
+    updateGuestBanner();
+    updatePaywallVisibility();
+    loadGallery();
+    renderHistory();
+  </script>
+</body>
+</html>
