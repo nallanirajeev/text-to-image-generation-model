@@ -1023,22 +1023,41 @@
       return authState.guestCount < GUEST_LIMIT;
     }
 
-    /* ── NAV auth area ── */
+   /* ── NAV auth area ── */
     function renderNavAuth() {
       var area = document.getElementById('nav-auth-area');
+      area.innerHTML = '';
       if (isLoggedIn()) {
-        var initials = (authState.user.name || authState.user.email || 'U')
-          .trim().split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
-        area.innerHTML =
-          '<div class="user-badge" onclick="openAuthModal(\'login\')" title="Account">' +
-            '<div class="user-avatar">' + escapeHtml(initials) + '</div>' +
-            '<span class="user-name">' + escapeHtml((authState.user.name || authState.user.email).split(' ')[0]) + '</span>' +
-          '</div>' +
-          '<button class="btn-logout" onclick="logout()">Sign out</button>';
+        var displayName = (authState.user.name || authState.user.email || 'User');
+        var initials = displayName.trim().split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
+        var firstName = displayName.split(' ')[0];
+
+        var badge = document.createElement('div');
+        badge.className = 'user-badge';
+        badge.title = authState.user.email || '';
+        badge.innerHTML = '<div class="user-avatar">' + initials + '</div><span class="user-name">' + firstName + '</span>';
+        badge.addEventListener('click', function(){ openAuthModal('login'); });
+
+        var logoutBtn = document.createElement('button');
+        logoutBtn.className = 'btn-logout';
+        logoutBtn.textContent = 'Sign out';
+        logoutBtn.addEventListener('click', logout);
+
+        area.appendChild(badge);
+        area.appendChild(logoutBtn);
       } else {
-        area.innerHTML =
-          '<button class="btn-nav-ghost" onclick="openAuthModal(\'login\')">Sign In</button>' +
-          '<button class="btn-nav-solid" onclick="openAuthModal(\'signup\')">Sign Up Free</button>';
+        var signInBtn = document.createElement('button');
+        signInBtn.className = 'btn-nav-ghost';
+        signInBtn.textContent = 'Sign In';
+        signInBtn.addEventListener('click', function(){ openAuthModal('login'); });
+
+        var signUpBtn = document.createElement('button');
+        signUpBtn.className = 'btn-nav-solid';
+        signUpBtn.textContent = 'Sign Up Free';
+        signUpBtn.addEventListener('click', function(){ openAuthModal('signup'); });
+
+        area.appendChild(signInBtn);
+        area.appendChild(signUpBtn);
       }
     }
 
@@ -1206,11 +1225,13 @@
 
     function logout() {
       authState.user = null;
-      saveAuthState();
+      authState.guestCount = 0;
+      localStorage.removeItem('df_auth');
+      localStorage.setItem('df_guest_count', '0');
       renderNavAuth();
       updateGuestBanner();
       updatePaywallVisibility();
-      showToast('Signed out.', 'info');
+      showToast('Signed out successfully.', 'info');
     }
 
     /* Simple non-crypto hash for demo purposes */
@@ -1230,14 +1251,21 @@
     function updatePaywallVisibility() {
       var paywall = document.getElementById('paywall-overlay');
       var genBtn  = document.getElementById('generate-btn');
-      var genBody = document.querySelector('.gen-body');
 
-      if (!isLoggedIn() && authState.guestCount >= GUEST_LIMIT) {
+      if (isLoggedIn()) {
+        /* Always show button, never paywall, for logged-in users */
+        paywall.style.display = 'none';
+        genBtn.style.display  = 'flex';
+        genBtn.disabled       = false;
+      } else if (authState.guestCount >= GUEST_LIMIT) {
+        /* Guest used their free image — show paywall */
         paywall.style.display = 'block';
         genBtn.style.display  = 'none';
       } else {
+        /* Guest still has free image remaining */
         paywall.style.display = 'none';
         genBtn.style.display  = 'flex';
+        genBtn.disabled       = false;
       }
     }
 
