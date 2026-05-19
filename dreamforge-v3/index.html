@@ -995,8 +995,14 @@
     function loadAuthState() {
       try {
         var saved = localStorage.getItem('df_auth');
-        if (saved) { authState.user = JSON.parse(saved); }
-        authState.guestCount = parseInt(localStorage.getItem('df_guest_count') || '0', 10);
+        if (saved) {
+          authState.user = JSON.parse(saved);
+          authState.guestCount = 0;
+          localStorage.setItem('df_guest_count', '0');
+        } else {
+          authState.user = null;
+          authState.guestCount = parseInt(localStorage.getItem('df_guest_count') || '0', 10);
+        }
       } catch(e) {
         authState.user = null;
         authState.guestCount = 0;
@@ -1007,10 +1013,12 @@
       try {
         if (authState.user) {
           localStorage.setItem('df_auth', JSON.stringify(authState.user));
+          localStorage.setItem('df_guest_count', '0');
+          authState.guestCount = 0;
         } else {
           localStorage.removeItem('df_auth');
+          localStorage.setItem('df_guest_count', String(authState.guestCount));
         }
-        localStorage.setItem('df_guest_count', String(authState.guestCount));
       } catch(e) {}
     }
 
