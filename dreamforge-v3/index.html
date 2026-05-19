@@ -980,50 +980,86 @@
 
   <!-- ══════════════ JAVASCRIPT ══════════════ -->
   <script>
-    /* ─────────────────────────────────────────
-       AUTH STATE  (client-side, localStorage)
-       In production swap this for a real JWT/
-       session-based auth system.
-    ───────────────────────────────────────── */
-    var GUEST_LIMIT = 1; // free generations before paywall
+    /* ==========================================================
+       DREAMFORGE — COMPLETE FIXED AUTH + GENERATION SCRIPT
+       Fix: logged-in users NEVER see paywall, period.
+    ========================================================== */
 
-    var authState = {
-      user: null,  // { name, email } or null
-      guestCount: 0,
-    };
+    var GUEST_LIMIT = 1;
 
+    /* ── Auth state object ── */
+    var authState = { user: null, guestCount: 0 };
+
+    /* ── Self-healing: automatically fix corrupted localStorage ──
+       Runs BEFORE anything else. If a valid df_auth user exists,
+       we force df_guest_count to 0 right now, in this millisecond,
+       before any other code can read the old broken value.
+       Users never need to clear their browser or use incognito. */
+    (function selfHeal() {
+      try {
+        var raw = localStorage.getItem('df_auth');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          /* Valid user object exists — kill the guest counter immediately */
+          if (parsed && typeof parsed === 'object' && parsed.email) {
+            localStorage.setItem('df_guest_count', '0');
+          }
+        }
+      } catch (e) {
+        /* Corrupt df_auth — wipe it so user gets a clean guest state */
+        localStorage.removeItem('df_auth');
+        localStorage.setItem('df_guest_count', '0');
+      }
+    })();
+
+    /* ── Read from localStorage on page load ── */
     function loadAuthState() {
       try {
-        var saved = localStorage.getItem('df_auth');
-        if (saved) {
-          authState.user = JSON.parse(saved);
+        var savedUser = localStorage.getItem('df_auth');
+        if (savedUser) {
+          var parsed = JSON.parse(savedUser);
+          /* Extra guard: only accept if it's a real user object with email */
+          if (parsed && typeof parsed === 'object' && parsed.email) {
+            authState.user = parsed;
+          } else {
+            authState.user = null;
+            localStorage.removeItem('df_auth');
+          }
+          /* Logged-in users ALWAYS get guestCount = 0, no exceptions */
           authState.guestCount = 0;
           localStorage.setItem('df_guest_count', '0');
         } else {
           authState.user = null;
-          authState.guestCount = parseInt(localStorage.getItem('df_guest_count') || '0', 10);
+          var stored = parseInt(localStorage.getItem('df_guest_count') || '0', 10);
+          authState.guestCount = isNaN(stored) ? 0 : stored;
         }
-      } catch(e) {
+      } catch (e) {
+        /* Any error = clean slate */
         authState.user = null;
         authState.guestCount = 0;
+        localStorage.removeItem('df_auth');
+        localStorage.setItem('df_guest_count', '0');
       }
     }
 
+    /* ── Write to localStorage ── */
     function saveAuthState() {
       try {
         if (authState.user) {
           localStorage.setItem('df_auth', JSON.stringify(authState.user));
+          /* Always reset guest count when a user is logged in */
           localStorage.setItem('df_guest_count', '0');
           authState.guestCount = 0;
         } else {
           localStorage.removeItem('df_auth');
           localStorage.setItem('df_guest_count', String(authState.guestCount));
         }
-      } catch(e) {}
+      } catch (e) {}
     }
 
+    /* ── Core checks ── */
     function isLoggedIn() {
-      return authState.user !== null;
+      return authState.user !== null && typeof authState.user === 'object';
     }
 
     function canGenerate() {
@@ -1031,20 +1067,66 @@
       return authState.guestCount < GUEST_LIMIT;
     }
 
-   /* ── NAV auth area ── */
+    /* ── Paywall visibility — THE key function ── */
+    function updatePaywallVisibility() {
+      var paywall = document.getElementById('paywall-overlay');
+      var genBtn  = document.getElementById('generate-btn');
+
+      if (isLoggedIn()) {
+        /* Logged in: ALWAYS hide paywall, ALWAYS show button */
+        paywall.style.display = 'none';
+        genBtn.style.display  = 'flex';
+        genBtn.disabled       = false;
+      } else if (authState.guestCount >= GUEST_LIMIT) {
+        /* Guest exhausted free limit: show paywall, hide button */
+        paywall.style.display = 'block';
+        genBtn.style.display  = 'none';
+      } else {
+        /* Guest still has free generation: show button */
+        paywall.style.display = 'none';
+        genBtn.style.display  = 'flex';
+        genBtn.disabled       = false;
+      }
+    }
+
+    /* ── Guest banner ── */
+    function updateGuestBanner() {
+      var banner = document.getElementById('guest-banner');
+      if (!banner) return;
+      if (isLoggedIn()) {
+        banner.style.display = 'none';
+      } else {
+        banner.style.display = 'flex';
+        var remaining = Math.max(0, GUEST_LIMIT - authState.guestCount);
+        var textEl = banner.querySelector('.guest-banner-text');
+        if (textEl) {
+          textEl.innerHTML =
+            '<strong>' + remaining + ' free image' + (remaining !== 1 ? 's' : '') + '</strong>' +
+            ' remaining — sign in for <strong>unlimited</strong> generations.';
+        }
+      }
+    }
+
+    /* ── Nav: render login/signup buttons OR user badge ── */
     function renderNavAuth() {
       var area = document.getElementById('nav-auth-area');
+      if (!area) return;
       area.innerHTML = '';
+
       if (isLoggedIn()) {
-        var displayName = (authState.user.name || authState.user.email || 'User');
-        var initials = displayName.trim().split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().slice(0,2);
+        var displayName = authState.user.name || authState.user.email || 'User';
+        var initials = displayName.trim().split(' ')
+          .map(function (w) { return w[0] || ''; })
+          .join('').toUpperCase().slice(0, 2) || 'U';
         var firstName = displayName.split(' ')[0];
 
         var badge = document.createElement('div');
         badge.className = 'user-badge';
         badge.title = authState.user.email || '';
-        badge.innerHTML = '<div class="user-avatar">' + initials + '</div><span class="user-name">' + firstName + '</span>';
-        badge.addEventListener('click', function(){ openAuthModal('login'); });
+        badge.innerHTML =
+          '<div class="user-avatar">' + initials + '</div>' +
+          '<span class="user-name">' + firstName + '</span>';
+        badge.addEventListener('click', function () { openAuthModal('login'); });
 
         var logoutBtn = document.createElement('button');
         logoutBtn.className = 'btn-logout';
@@ -1057,89 +1139,114 @@
         var signInBtn = document.createElement('button');
         signInBtn.className = 'btn-nav-ghost';
         signInBtn.textContent = 'Sign In';
-        signInBtn.addEventListener('click', function(){ openAuthModal('login'); });
+        signInBtn.addEventListener('click', function () { openAuthModal('login'); });
 
         var signUpBtn = document.createElement('button');
         signUpBtn.className = 'btn-nav-solid';
         signUpBtn.textContent = 'Sign Up Free';
-        signUpBtn.addEventListener('click', function(){ openAuthModal('signup'); });
+        signUpBtn.addEventListener('click', function () { openAuthModal('signup'); });
 
         area.appendChild(signInBtn);
         area.appendChild(signUpBtn);
       }
     }
 
-    /* ── Guest banner ── */
-    function updateGuestBanner() {
-      var banner = document.getElementById('guest-banner');
-      if (isLoggedIn()) {
-        banner.style.display = 'none';
-      } else {
-        banner.style.display = 'flex';
-        var remaining = Math.max(0, GUEST_LIMIT - authState.guestCount);
-        banner.querySelector('.guest-banner-text').innerHTML =
-          '<strong>' + remaining + ' free image' + (remaining !== 1 ? 's' : '') + '</strong>' +
-          ' remaining — sign in for <strong>unlimited</strong> generations.';
-      }
+    /* ── Logout: clear everything ── */
+    function logout() {
+      authState.user = null;
+      authState.guestCount = 0;
+      localStorage.removeItem('df_auth');
+      localStorage.setItem('df_guest_count', '0');
+      renderNavAuth();
+      updateGuestBanner();
+      updatePaywallVisibility();
+      showToast('Signed out successfully.', 'info');
     }
 
-    /* ─────────────────────────────────────────
+    /* ==========================================================
        AUTH MODAL
-    ───────────────────────────────────────── */
+    ========================================================== */
     var currentAuthTab = 'login';
 
     function openAuthModal(tab) {
       currentAuthTab = tab || 'login';
       switchAuthTab(currentAuthTab);
       clearAuthForm();
-      document.getElementById('auth-modal-backdrop').classList.add('open');
-      setTimeout(function(){
+      var backdrop = document.getElementById('auth-modal-backdrop');
+      if (backdrop) backdrop.classList.add('open');
+      setTimeout(function () {
         var el = document.getElementById('auth-email');
         if (el) el.focus();
-      }, 100);
+      }, 120);
     }
 
     function closeAuthModal() {
-      document.getElementById('auth-modal-backdrop').classList.remove('open');
+      var backdrop = document.getElementById('auth-modal-backdrop');
+      if (backdrop) backdrop.classList.remove('open');
     }
 
     function switchAuthTab(tab) {
       currentAuthTab = tab;
-      document.getElementById('auth-tab-login').classList.toggle('active', tab === 'login');
-      document.getElementById('auth-tab-signup').classList.toggle('active', tab === 'signup');
-      document.getElementById('name-field').style.display = tab === 'signup' ? 'block' : 'none';
-      document.getElementById('auth-submit-btn').textContent = tab === 'login' ? 'Sign In' : 'Create Account';
-      document.getElementById('auth-error').style.display = 'none';
-      document.getElementById('auth-switch-text').innerHTML = tab === 'login'
-        ? 'Don\'t have an account? <button onclick="switchAuthTab(\'signup\')">Create one free</button>'
-        : 'Already have an account? <button onclick="switchAuthTab(\'login\')">Sign in</button>';
-      if (tab === 'signup') {
-        document.getElementById('auth-password').setAttribute('autocomplete','new-password');
-      } else {
-        document.getElementById('auth-password').setAttribute('autocomplete','current-password');
+      var loginTab  = document.getElementById('auth-tab-login');
+      var signupTab = document.getElementById('auth-tab-signup');
+      var nameField = document.getElementById('name-field');
+      var submitBtn = document.getElementById('auth-submit-btn');
+      var switchTxt = document.getElementById('auth-switch-text');
+      var errEl     = document.getElementById('auth-error');
+      var pwField   = document.getElementById('auth-password');
+
+      if (loginTab)  loginTab.classList.toggle('active',  tab === 'login');
+      if (signupTab) signupTab.classList.toggle('active', tab === 'signup');
+      if (nameField) nameField.style.display = tab === 'signup' ? 'block' : 'none';
+      if (submitBtn) submitBtn.textContent = tab === 'login' ? 'Sign In' : 'Create Account';
+      if (errEl)     errEl.style.display = 'none';
+      if (pwField)   pwField.setAttribute('autocomplete', tab === 'signup' ? 'new-password' : 'current-password');
+
+      if (switchTxt) {
+        switchTxt.innerHTML = tab === 'login'
+          ? 'Don\'t have an account? <button onclick="switchAuthTab(\'signup\')">Create one free</button>'
+          : 'Already have an account? <button onclick="switchAuthTab(\'login\')">Sign in</button>';
       }
     }
 
     function clearAuthForm() {
-      document.getElementById('auth-name').value = '';
-      document.getElementById('auth-email').value = '';
-      document.getElementById('auth-password').value = '';
-      document.getElementById('auth-error').style.display = 'none';
+      var fields = ['auth-name', 'auth-email', 'auth-password'];
+      fields.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      var errEl = document.getElementById('auth-error');
+      if (errEl) errEl.style.display = 'none';
     }
 
     function showAuthError(msg) {
       var el = document.getElementById('auth-error');
+      if (!el) return;
       el.textContent = msg;
       el.style.display = 'block';
     }
 
-    function handleAuthSubmit() {
-      var name     = document.getElementById('auth-name').value.trim();
-      var email    = document.getElementById('auth-email').value.trim();
-      var password = document.getElementById('auth-password').value;
-      var btn      = document.getElementById('auth-submit-btn');
+    /* Simple hash — for demo localStorage auth only */
+    function simpleHash(str) {
+      var hash = 0;
+      for (var i = 0; i < str.length; i++) {
+        var c = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + c;
+        hash = hash & hash;
+      }
+      return 'df_h_' + Math.abs(hash).toString(16);
+    }
 
-      /* Basic validation */
+    function handleAuthSubmit() {
+      var nameEl  = document.getElementById('auth-name');
+      var emailEl = document.getElementById('auth-email');
+      var pwEl    = document.getElementById('auth-password');
+      var btn     = document.getElementById('auth-submit-btn');
+
+      var name     = nameEl  ? nameEl.value.trim()  : '';
+      var email    = emailEl ? emailEl.value.trim()  : '';
+      var password = pwEl    ? pwEl.value            : '';
+
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         showAuthError('Please enter a valid email address.');
         return;
@@ -1153,133 +1260,84 @@
         return;
       }
 
-      btn.disabled = true;
-      btn.textContent = currentAuthTab === 'login' ? 'Signing in…' : 'Creating account…';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = currentAuthTab === 'login' ? 'Signing in…' : 'Creating account…';
+      }
 
-      /*
-        NOTE: This is a CLIENT-SIDE auth simulation using localStorage.
-        For production, replace with a real backend auth system (e.g. Supabase Auth,
-        Auth.js, Clerk, etc.). The pattern here stores hashed credentials locally
-        just to demonstrate the UX gate — do NOT use as production auth.
-      */
-      setTimeout(function() {
+      setTimeout(function () {
         try {
+          var storageKey = 'df_user_' + email.toLowerCase();
+
           if (currentAuthTab === 'signup') {
-            /* Check if already exists */
-            var existing = localStorage.getItem('df_user_' + email);
+            var existing = localStorage.getItem(storageKey);
             if (existing) {
               showAuthError('An account with this email already exists. Try signing in.');
-              btn.disabled = false;
-              btn.textContent = 'Create Account';
+              if (btn) { btn.disabled = false; btn.textContent = 'Create Account'; }
               return;
             }
-            /* Store user (password stored as simple hash for demo) */
             var userData = { name: name, email: email, pw: simpleHash(password) };
-            localStorage.setItem('df_user_' + email, JSON.stringify(userData));
+            localStorage.setItem(storageKey, JSON.stringify(userData));
             authState.user = { name: name, email: email };
+
           } else {
-            /* Login */
-            var storedRaw = localStorage.getItem('df_user_' + email);
+            var storedRaw = localStorage.getItem(storageKey);
             if (!storedRaw) {
               showAuthError('No account found with this email. Try signing up.');
-              btn.disabled = false;
-              btn.textContent = 'Sign In';
+              if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
               return;
             }
             var stored = JSON.parse(storedRaw);
             if (stored.pw !== simpleHash(password)) {
               showAuthError('Incorrect password. Please try again.');
-              btn.disabled = false;
-              btn.textContent = 'Sign In';
+              if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
               return;
             }
             authState.user = { name: stored.name, email: stored.email };
           }
 
+          /* ── SUCCESS: save, reset guest count, update UI ── */
+          authState.guestCount = 0;
           saveAuthState();
           closeAuthModal();
           renderNavAuth();
           updateGuestBanner();
           updatePaywallVisibility();
 
+          var welcomeName = (authState.user.name || authState.user.email || '').split(' ')[0];
           showToast(
             currentAuthTab === 'signup'
               ? 'Account created! Generate unlimited images.'
-              : 'Welcome back, ' + (authState.user.name || authState.user.email).split(' ')[0] + '!',
+              : 'Welcome back, ' + welcomeName + '!',
             'success'
           );
-        } catch(e) {
+
+        } catch (e) {
           showAuthError('Something went wrong. Please try again.');
-          btn.disabled = false;
-          btn.textContent = currentAuthTab === 'login' ? 'Sign In' : 'Create Account';
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = currentAuthTab === 'login' ? 'Sign In' : 'Create Account';
+          }
         }
-      }, 600); /* Simulate network delay */
+      }, 500);
     }
 
-    /* Allow Enter key in auth inputs */
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && document.getElementById('auth-modal-backdrop').classList.contains('open')) {
-        handleAuthSubmit();
-      }
-      if (e.key === 'Escape' && document.getElementById('auth-modal-backdrop').classList.contains('open')) {
-        closeAuthModal();
-      }
+    /* Enter key submits, Escape closes */
+    document.addEventListener('keydown', function (e) {
+      var backdrop = document.getElementById('auth-modal-backdrop');
+      if (!backdrop || !backdrop.classList.contains('open')) return;
+      if (e.key === 'Enter')  handleAuthSubmit();
+      if (e.key === 'Escape') closeAuthModal();
     });
 
-    /* Close modal on backdrop click */
-    document.getElementById('auth-modal-backdrop').addEventListener('click', function(e) {
+    /* Backdrop click closes modal */
+    document.getElementById('auth-modal-backdrop').addEventListener('click', function (e) {
       if (e.target === this) closeAuthModal();
     });
 
-    function logout() {
-      authState.user = null;
-      authState.guestCount = 0;
-      localStorage.removeItem('df_auth');
-      localStorage.setItem('df_guest_count', '0');
-      renderNavAuth();
-      updateGuestBanner();
-      updatePaywallVisibility();
-      showToast('Signed out successfully.', 'info');
-    }
-
-    /* Simple non-crypto hash for demo purposes */
-    function simpleHash(str) {
-      var hash = 0;
-      for (var i = 0; i < str.length; i++) {
-        var c = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + c;
-        hash = hash & hash;
-      }
-      return 'h' + Math.abs(hash).toString(16);
-    }
-
-    /* ─────────────────────────────────────────
-       PAYWALL VISIBILITY
-    ───────────────────────────────────────── */
-    function updatePaywallVisibility() {
-      var paywall = document.getElementById('paywall-overlay');
-      var genBtn  = document.getElementById('generate-btn');
-
-      if (isLoggedIn()) {
-        /* Always show button, never paywall, for logged-in users */
-        paywall.style.display = 'none';
-        genBtn.style.display  = 'flex';
-        genBtn.disabled       = false;
-      } else if (authState.guestCount >= GUEST_LIMIT) {
-        /* Guest used their free image — show paywall */
-        paywall.style.display = 'block';
-        genBtn.style.display  = 'none';
-      } else {
-        /* Guest still has free image remaining */
-        paywall.style.display = 'none';
-        genBtn.style.display  = 'flex';
-        genBtn.disabled       = false;
-      }
-    }
-
-    /* ─────────────────────────────────────────
-       GENERATION LOGIC (unchanged from v2)
-    ───────────────────────────────────────── */
+    /* ==========================================================
+       GENERATION
+    ========================================================== */
     var currentImageData = null;
     var currentPrompt    = '';
     var sessionHistory   = [];
@@ -1296,7 +1354,7 @@
     function loadSessionHistory() {
       try {
         sessionHistory = JSON.parse(localStorage.getItem('df_history') || '[]');
-      } catch(e) {
+      } catch (e) {
         sessionHistory = [];
       }
     }
@@ -1310,14 +1368,14 @@
     var charCountEl    = document.getElementById('char-count');
     var loadingText    = document.getElementById('loading-text');
 
-    promptInput.addEventListener('input', function() {
+    promptInput.addEventListener('input', function () {
       var len = promptInput.value.length;
       charCountEl.textContent = len + ' / 1000';
       charCountEl.style.color = len > 900 ? '#f97316' : '';
     });
 
-    promptInput.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { generateImage(); }
+    promptInput.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generateImage();
     });
 
     function scrollToGenerate() {
@@ -1326,7 +1384,7 @@
 
     function showHistoryTab() {
       var btn = document.getElementById('tab-history');
-      switchTab('history', btn);
+      if (btn) switchTab('history', btn);
       document.getElementById('gallery-section').scrollIntoView({ behavior: 'smooth' });
     }
 
@@ -1344,7 +1402,7 @@
     async function generateImage() {
       if (isGenerating) return;
 
-      /* Auth / quota gate */
+      /* Gate check */
       if (!canGenerate()) {
         updatePaywallVisibility();
         document.getElementById('paywall-overlay').scrollIntoView({ behavior: 'smooth' });
@@ -1363,21 +1421,20 @@
         return;
       }
 
-      isGenerating    = true;
-      currentPrompt   = prompt;
+      isGenerating  = true;
+      currentPrompt = prompt;
 
       generateBtn.disabled = true;
       generateBtn.innerHTML =
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:ringA 0.9s linear infinite;">' +
-          '<path stroke-linecap="round" d="M12 3a9 9 0 1 0 9 9" />' +
-        '</svg>' +
-        'Generating…';
+          '<path stroke-linecap="round" d="M12 3a9 9 0 1 0 9 9"/>' +
+        '</svg>Generating…';
 
       resultState.style.display  = 'none';
       loadingState.style.display = 'block';
 
       var msgIdx = 0;
-      var msgInterval = setInterval(function() {
+      var msgInterval = setInterval(function () {
         msgIdx = (msgIdx + 1) % loadingMessages.length;
         loadingText.textContent = loadingMessages[msgIdx];
       }, 3000);
@@ -1390,19 +1447,16 @@
         });
 
         var data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Generation failed. Please try again.');
 
-        if (!response.ok) {
-          throw new Error(data.error || 'Generation failed. Please try again.');
-        }
-
-        generatedImage.src       = data.image;
+        generatedImage.src         = data.image;
         resultPromptEl.textContent = prompt;
-        currentImageData         = data.image;
+        currentImageData           = data.image;
 
         loadingState.style.display = 'none';
         resultState.style.display  = 'block';
 
-        /* Increment guest count only if not logged in */
+        /* Only count guest usage — never count logged-in users */
         if (!isLoggedIn()) {
           authState.guestCount += 1;
           saveAuthState();
@@ -1414,7 +1468,7 @@
         showToast('Image generated.', 'success');
         setTimeout(loadGallery, 1500);
 
-      } catch(err) {
+      } catch (err) {
         loadingState.style.display = 'none';
         showToast(err.message, 'error', 6000);
       } finally {
@@ -1424,8 +1478,7 @@
         generateBtn.innerHTML =
           '<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">' +
             '<path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"/>' +
-          '</svg>' +
-          'Generate Image';
+          '</svg>Generate Image';
       }
     }
 
@@ -1446,29 +1499,30 @@
       var entry = { prompt: prompt, image: image, timestamp: new Date().toISOString(), id: Date.now() };
       sessionHistory.unshift(entry);
       if (sessionHistory.length > 20) sessionHistory = sessionHistory.slice(0, 20);
-      try { localStorage.setItem('df_history', JSON.stringify(sessionHistory)); } catch(e) {}
+      try { localStorage.setItem('df_history', JSON.stringify(sessionHistory)); } catch (e) {}
       renderHistory();
     }
 
     function renderHistory() {
       var list  = document.getElementById('history-list');
       var empty = document.getElementById('history-empty');
+      if (!list) return;
       if (sessionHistory.length === 0) {
-        list.innerHTML = '';
-        empty.hidden   = false;
+        list.innerHTML  = '';
+        if (empty) empty.hidden = false;
         return;
       }
-      empty.hidden = true;
-      list.innerHTML = sessionHistory.map(function(entry) {
+      if (empty) empty.hidden = true;
+      list.innerHTML = sessionHistory.map(function (entry) {
         return '<div class="history-item">' +
-          '<div class="history-thumb" onclick="viewHistoryImage(' + entry.id + ')" role="button" tabindex="0" aria-label="View image">' +
-            '<img src="' + escapeHtml(entry.image) + '" alt="" loading="lazy" />' +
+          '<div class="history-thumb" onclick="viewHistoryImage(' + entry.id + ')" role="button" tabindex="0">' +
+            '<img src="' + escapeHtml(entry.image) + '" alt="" loading="lazy"/>' +
           '</div>' +
           '<div class="history-meta">' +
             '<p class="history-prompt">' + escapeHtml(entry.prompt) + '</p>' +
-            '<p class="history-date">' + formatDate(entry.timestamp) + '</p>' +
+            '<p class="history-date">'   + formatDate(entry.timestamp) + '</p>' +
           '</div>' +
-          '<button class="history-dl-btn" onclick="downloadHistoryImage(' + entry.id + ')" aria-label="Download image">' +
+          '<button class="history-dl-btn" onclick="downloadHistoryImage(' + entry.id + ')" aria-label="Download">' +
             '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">' +
               '<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/>' +
             '</svg>' +
@@ -1478,18 +1532,18 @@
     }
 
     function viewHistoryImage(id) {
-      var entry = sessionHistory.find(function(e){ return e.id == id; });
+      var entry = sessionHistory.find(function (e) { return e.id == id; });
       if (!entry) return;
-      currentImageData = entry.image;
-      currentPrompt    = entry.prompt;
-      generatedImage.src        = entry.image;
+      currentImageData           = entry.image;
+      currentPrompt              = entry.prompt;
+      generatedImage.src         = entry.image;
       resultPromptEl.textContent = entry.prompt;
-      resultState.style.display = 'block';
+      resultState.style.display  = 'block';
       document.getElementById('generate').scrollIntoView({ behavior: 'smooth' });
     }
 
     function downloadHistoryImage(id) {
-      var entry = sessionHistory.find(function(e){ return e.id == id; });
+      var entry = sessionHistory.find(function (e) { return e.id == id; });
       if (!entry) return;
       var a = document.createElement('a');
       a.href     = entry.image;
@@ -1503,7 +1557,7 @@
     function clearHistory() {
       if (!confirm('Clear all history? This cannot be undone.')) return;
       sessionHistory = [];
-      try { localStorage.removeItem('df_history'); } catch(e) {}
+      try { localStorage.removeItem('df_history'); } catch (e) {}
       renderHistory();
       showToast('History cleared.', 'info');
     }
@@ -1511,46 +1565,44 @@
     /* ── Gallery ── */
     async function loadGallery() {
       var grid = document.getElementById('gallery-grid');
+      if (!grid) return;
       grid.innerHTML = Array(8).fill('<div class="skeleton skeleton-cell"></div>').join('');
       try {
         var res  = await fetch('/api/gallery');
         var data = await res.json();
         if (!data.generations || data.generations.length === 0) {
           grid.innerHTML =
-            '<div style="grid-column:1/-1;">' +
-              '<div class="empty-state">' +
-                '<div class="empty-icon">' +
-                  '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">' +
-                    '<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>' +
-                  '</svg>' +
-                '</div>' +
-                '<p class="empty-title">Gallery is empty</p>' +
-                '<p class="empty-sub">Be the first to generate an image</p>' +
-              '</div>' +
-            '</div>';
+            '<div style="grid-column:1/-1"><div class="empty-state">' +
+              '<div class="empty-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">' +
+                '<path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>' +
+              '</svg></div>' +
+              '<p class="empty-title">Gallery is empty</p>' +
+              '<p class="empty-sub">Be the first to generate an image</p>' +
+            '</div></div>';
           return;
         }
-        grid.innerHTML = data.generations.map(function(gen) {
-          return '<div class="gallery-card" onclick="useGalleryPrompt(\'' + escapeAttr(gen.prompt) + '\')" role="button" tabindex="0" aria-label="Use this prompt">' +
-            '<img src="' + escapeHtml(gen.image_data) + '" alt="" loading="lazy" />' +
+        grid.innerHTML = data.generations.map(function (gen) {
+          var safePrompt = escapeHtml(gen.prompt);
+          var safeImg    = escapeHtml(gen.image_data);
+          return '<div class="gallery-card" onclick="useGalleryPrompt(this)" data-prompt="' + safePrompt + '" role="button" tabindex="0">' +
+            '<img src="' + safeImg + '" alt="" loading="lazy"/>' +
             '<div class="gallery-card-overlay">' +
-              '<p class="gc-prompt">' + escapeHtml(gen.prompt) + '</p>' +
-              '<p class="gc-date">' + formatDate(gen.created_at) + '</p>' +
+              '<p class="gc-prompt">' + safePrompt + '</p>' +
+              '<p class="gc-date">'   + formatDate(gen.created_at) + '</p>' +
             '</div>' +
           '</div>';
         }).join('');
-      } catch(err) {
+      } catch (err) {
         grid.innerHTML =
-          '<div style="grid-column:1/-1;">' +
-            '<div class="empty-state">' +
-              '<p class="empty-title">Couldn\'t load gallery</p>' +
-              '<p class="empty-sub">Check your database configuration</p>' +
-            '</div>' +
-          '</div>';
+          '<div style="grid-column:1/-1"><div class="empty-state">' +
+            '<p class="empty-title">Couldn\'t load gallery</p>' +
+            '<p class="empty-sub">Check your database configuration</p>' +
+          '</div></div>';
       }
     }
 
-    function useGalleryPrompt(prompt) {
+    function useGalleryPrompt(card) {
+      var prompt = card.getAttribute('data-prompt') || '';
       promptInput.value = prompt;
       charCountEl.textContent = prompt.length + ' / 1000';
       document.getElementById('generate').scrollIntoView({ behavior: 'smooth' });
@@ -1560,7 +1612,7 @@
 
     /* ── Tabs ── */
     function switchTab(tab, btn) {
-      document.querySelectorAll('.tab-btn').forEach(function(b) {
+      document.querySelectorAll('.tab-btn').forEach(function (b) {
         b.classList.remove('active');
         b.setAttribute('aria-selected', 'false');
       });
@@ -1569,9 +1621,11 @@
       var gp = document.getElementById('panel-gallery');
       var hp = document.getElementById('panel-history');
       if (tab === 'gallery') {
-        gp.hidden = false; hp.hidden = true;
+        if (gp) gp.hidden = false;
+        if (hp) hp.hidden = true;
       } else {
-        gp.hidden = true; hp.hidden = false;
+        if (gp) gp.hidden = true;
+        if (hp) hp.hidden = false;
         renderHistory();
       }
     }
@@ -1582,49 +1636,57 @@
       duration = duration || 4000;
       var icons = { success: '✓', error: '✕', info: '◆' };
       var container = document.getElementById('toast-container');
+      if (!container) return;
       var toast = document.createElement('div');
       toast.className = 'toast toast-' + type;
       toast.innerHTML =
         '<div class="toast-icon">' + (icons[type] || '·') + '</div>' +
         '<span>' + escapeHtml(String(message)) + '</span>';
       container.appendChild(toast);
-      setTimeout(function() {
+      setTimeout(function () {
         toast.classList.add('toast-exit');
-        setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 280);
+        setTimeout(function () { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 280);
       }, duration);
     }
 
     /* ── Utilities ── */
     function escapeHtml(str) {
       return String(str || '')
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    function escapeAttr(str) {
-      return String(str || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
-    }
+
     function formatDate(isoString) {
       if (!isoString) return '';
       try {
         var d = new Date(isoString);
-        return d.toLocaleDateString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-      } catch(e) { return ''; }
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      } catch (e) { return ''; }
     }
 
     /* ── Scroll reveal ── */
-    var revealObs = new IntersectionObserver(function(entries) {
-      entries.forEach(function(el) { if (el.isIntersecting) el.target.classList.add('visible'); });
+    var revealObs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (el) { if (el.isIntersecting) el.target.classList.add('visible'); });
     }, { threshold: 0.08 });
-    document.querySelectorAll('.reveal').forEach(function(el) { revealObs.observe(el); });
+    document.querySelectorAll('.reveal').forEach(function (el) { revealObs.observe(el); });
 
-    /* ── INIT ── */
-    loadAuthState();
-    loadSessionHistory();
-    renderNavAuth();
-    updateGuestBanner();
-    updatePaywallVisibility();
-    loadGallery();
-    renderHistory();
+    /* ==========================================================
+       INIT — order matters
+    ========================================================== */
+    loadAuthState();           /* 1. read localStorage + self-heal */
+    /* Extra safety: if user is logged in, guarantee guestCount is 0
+       and paywall can never show — covers ALL edge cases */
+    if (authState.user) {
+      authState.guestCount = 0;
+      localStorage.setItem('df_guest_count', '0');
+    }
+    loadSessionHistory();      /* 2. read history */
+    renderNavAuth();           /* 3. draw nav buttons */
+    updateGuestBanner();       /* 4. show/hide banner */
+    updatePaywallVisibility(); /* 5. show/hide paywall — logged-in = always open */
+    loadGallery();             /* 6. fetch gallery */
+    renderHistory();           /* 7. draw history list */
+
   </script>
 </body>
 </html>
